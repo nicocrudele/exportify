@@ -1,4 +1,5 @@
 import $ from "jquery" // TODO: Remove jQuery dependency
+import Bottleneck from "bottleneck"
 
 export function authorize() {
   var client_id = getQueryParam('app_client_id');
@@ -23,22 +24,42 @@ export function getQueryParam(name) {
   return results === null ? "" : decodeURIComponent(results[1].replace(/\+/g, " "));
 }
 
-export function apiCall(url, access_token) {
+const limiter = new Bottleneck({
+  maxConcurrent: 1,
+  minTime: 0
+})
+
+// Listen to the "failed" event
+limiter.on("failed", async (error, jobInfo) => {
+  const id = jobInfo.options.id
+  console.warn(`Job ${id} failed with status: ${error.status}`)
+
+  if (error.status === 401) {
+    // Return to home page after auth token expiry
+    window.location.href = window.location.href.split('#')[0]
+  } else if (error.status === 429 && jobInfo.retryCount === 0) {
+    // Retry according to the indication from the server with a small buffer
+    let delay = (error.getResponseHeader("Retry-After") * 1000) + 1000 // TODO: Implement fallback
+
+    // TODO: Implement UI update
+
+    return delay;
+  } else {
+    // TODO: Improve
+    alert(error.responseText)
+  }
+})
+
+// Listen to the "retry" event
+limiter.on("retry", (error, jobInfo) => {
+  // TODO: Implement UI update
+})
+
+export const apiCall = limiter.wrap(function(url, accessToken) {
   return $.ajax({
     url: url,
     headers: {
-      'Authorization': 'Bearer ' + access_token
-    }
-  }).fail(function (jqXHR, textStatus) {
-    if (jqXHR.status === 401) {
-      // Return to home page after auth token expiry
-      window.location.href = window.location.href.split('#')[0]
-    } else if (jqXHR.status === 429) {
-      // API Rate-limiting encountered
-      window.location.href = window.location.href.split('#')[0] + '?rate_limit_message=true'
-    } else {
-      // Otherwise report the error so user can raise an issue
-      alert(jqXHR.responseText);
+      'Authorization': 'Bearer ' + accessToken
     }
   })
-}
+})
